@@ -149,6 +149,10 @@ int rconnect(char *host, char *port,
 
 	if (event->event != RDMA_CM_EVENT_ESTABLISHED) {
 		rdma_ack_cm_event(event);
+		fprintf(stderr, "rdma_get_cm_event() got event: %s\n",
+			rdma_event_str(event->event));
+		if (event->event == RDMA_CM_EVENT_REJECTED)
+			errno = ECONNREFUSED;
 		return 117;
 	}
 
@@ -291,6 +295,9 @@ int main(int argc, char   *argv[ ])
 			} else {
 				return 1;
 			}
+		} else if (r == 117 && errno == ECONNREFUSED) {
+			fprintf(stderr, "Connection failed: %m\n");
+			return 1;
 		} else {
 			fprintf(stderr, "rconnect returned %d (error: %m)\n", r);
 		}
