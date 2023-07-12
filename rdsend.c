@@ -219,7 +219,7 @@ int main(int argc, char   *argv[ ])
 	int64_t read_bytes;
 	uint64_t total_bytes, buf_read_bytes;
 	int wr_id = 1, more_to_send = 1;
-	uint32_t buf_size = 16 * 524288;
+	uint32_t buf_size = 16 * (512 * 1024);
 	uint32_t buf_len = 0;
 
 	char *host, *ports;
@@ -275,13 +275,19 @@ int main(int argc, char   *argv[ ])
 		int r = rconnect(host, ports, cm_channel, &cm_id, &mr, &cq, &pd, &comp_chan, buf, buf_len, &server_pdata);
 		if (r == 0)
 			break;
-		else if (errno == ENOMEM) {
-			fprintf(stderr, "Connection failed (%m); raise RLIMIT_MEMLOCK\n");
-			return 1;
-		}
-		else {
+		else if (r == 99 && errno == ENOMEM) {
+			fprintf(stderr, "Connection failed: %m (tried %d bytes); raise RLIMIT_MEMLOCK\n", buf_len);
+			if (buf_size > (512 * 1024)) {
+				buf_size /= 2;
+				buf_len = buf_size*2+4;
+				fprintf(stderr, "Retrying with %d bytes\n", buf_len);
+			} else {
+				return 1;
+			}
+		} else {
 			fprintf(stderr, "rconnect returned %d (error: %m)\n", r);
 		}
+
 		retries++;
 		if (retries > 300) {
 			fprintf(stderr, "Connection timed out\n");
