@@ -271,7 +271,17 @@ int main(int argc, char   *argv[ ])
 
 	buf_len = buf_size*2+4;
 
-	while (0 != rconnect(host, ports, cm_channel, &cm_id, &mr, &cq, &pd, &comp_chan, buf, buf_len, &server_pdata)) {
+	for (;;) {
+		int r = rconnect(host, ports, cm_channel, &cm_id, &mr, &cq, &pd, &comp_chan, buf, buf_len, &server_pdata);
+		if (r == 0)
+			break;
+		else if (errno == ENOMEM) {
+			fprintf(stderr, "Connection failed (%m); raise RLIMIT_MEMLOCK\n");
+			return 1;
+		}
+		else {
+			fprintf(stderr, "rconnect returned %d (error: %m)\n", r);
+		}
 		retries++;
 		if (retries > 300) {
 			fprintf(stderr, "Connection timed out\n");
