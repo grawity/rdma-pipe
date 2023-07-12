@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/types.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -258,18 +259,24 @@ int main(int argc, char   *argv[ ])
 	key = argv[argv_idx++];
 	keylen = strlen(key);
 
-	buf = calloc(buf_size*2+4, 1); 
+	buf_len = buf_size*2+4;
+
+	struct rlimit lim;
+	getrlimit(RLIMIT_MEMLOCK, &lim);
+	if (buf_len > lim.rlim_cur) {
+		fprintf(stderr, "Warning: Insufficient RLIMIT_MEMLOCK (want %u bytes, can do %ld:%ld)\n",
+			buf_len, lim.rlim_cur, lim.rlim_max);
+	}
+
+	buf = calloc(buf_len, 1);
 	if (!buf) 
 		return 113;
 	buf2 = (uint32_t*)(((char*)buf) + buf_size);
-
 
 	/* RDMA CM */
 	cm_channel = rdma_create_event_channel(); 
 	if (!cm_channel)  
 		return 101; 
-
-	buf_len = buf_size*2+4;
 
 	for (;;) {
 		int r = rconnect(host, ports, cm_channel, &cm_id, &mr, &cq, &pd, &comp_chan, buf, buf_len, &server_pdata);
