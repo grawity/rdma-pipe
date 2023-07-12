@@ -1,12 +1,12 @@
-/* 
+/*
  * cc -o rdsend rdsend.c -lrdmacm -libverbs
- * 
+ *
  * usage:
- * rdsend <server> <port> <key> 
+ * rdsend <server> <port> <key>
  *
  * Reads data from stdin and RDMA sends it to the given server and port, authenticating with the key.
  *
- */ 
+ */
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -21,47 +21,47 @@
 
 #include <rdma/rdma_cma.h>
 
-enum   { 
-	RESOLVE_TIMEOUT_MS = 5000, 
-}; 
+enum   {
+	RESOLVE_TIMEOUT_MS = 5000,
+};
 
-struct pdata { 
-	uint64_t	buf_va; 
+struct pdata {
+	uint64_t	buf_va;
 	uint32_t	buf_rkey;
-}; 
+};
 
 void usage() {
 	fprintf(stderr, "USAGE: rdsend [-v] <server> <port> <key>\n");
 }
 
 
-int rconnect(char *host, char *port, 
-	struct rdma_event_channel *cm_channel, 
-	struct rdma_cm_id **cm_id, 
+int rconnect(char *host, char *port,
+	struct rdma_event_channel *cm_channel,
+	struct rdma_cm_id **cm_id,
 	struct ibv_mr **mr,
 	struct ibv_cq **cq,
-   	struct ibv_pd **pd,
+	struct ibv_pd **pd,
 	struct ibv_comp_channel **comp_chan,
-	void *buf, uint32_t buf_len, 
+	void *buf, uint32_t buf_len,
 	struct pdata *server_pdata
 ) {
-   	struct rdma_conn_param			conn_param = { };
-   	struct addrinfo					*res, *t; 
-   	struct addrinfo					hints = { 
-   		.ai_family    = AF_INET,
-   		.ai_socktype  = SOCK_STREAM
-   	};
-   	struct ibv_qp_init_attr			qp_attr = { }; 
-	int								n; 
-   	struct rdma_cm_event			*event;  
+	struct rdma_conn_param			conn_param = { };
+	struct addrinfo					*res, *t;
+	struct addrinfo					hints = {
+		.ai_family    = AF_INET,
+		.ai_socktype  = SOCK_STREAM
+	};
+	struct ibv_qp_init_attr			qp_attr = { };
+	int								n;
+	struct rdma_cm_event			*event;
 	int err;
 
 	err = rdma_create_id(cm_channel, cm_id, NULL, RDMA_PS_TCP);
-	if (err)  
+	if (err)
 		return err;
 
 	n = getaddrinfo(host, port, &hints, &res);
-	if (n < 0)  
+	if (n < 0)
 		return 102;
 
 	/* Connect to remote end */
@@ -92,35 +92,35 @@ int rconnect(char *host, char *port,
 		return 107;
 
 	if (event->event != RDMA_CM_EVENT_ROUTE_RESOLVED)
-		return 108; 
+		return 108;
 
 	rdma_ack_cm_event(event);
 
 	/* Create IB buffers and CQs and things */
 
-	*pd = ibv_alloc_pd((*cm_id)->verbs); 
-	if (!*pd) 
+	*pd = ibv_alloc_pd((*cm_id)->verbs);
+	if (!*pd)
 		return 109;
 
 	*comp_chan = ibv_create_comp_channel((*cm_id)->verbs);
-	if (!*comp_chan) 
+	if (!*comp_chan)
 		return 110;
 
-	*cq = ibv_create_cq((*cm_id)->verbs, 2,NULL, *comp_chan, 0); 
-	if (!*cq) 
+	*cq = ibv_create_cq((*cm_id)->verbs, 2,NULL, *comp_chan, 0);
+	if (!*cq)
 		return 111;
 
 	if (ibv_req_notify_cq(*cq, 0))
 		return 112;
 
-	*mr = ibv_reg_mr(*pd, buf, buf_len, IBV_ACCESS_LOCAL_WRITE); 
-	if (!*mr) 
+	*mr = ibv_reg_mr(*pd, buf, buf_len, IBV_ACCESS_LOCAL_WRITE);
+	if (!*mr)
 		return 99;
 
-	//qp_attr.cap.max_send_wr = 2; 
+	//qp_attr.cap.max_send_wr = 2;
 	//qp_attr.cap.max_send_sge = 1;
-	//qp_attr.cap.max_recv_wr = 1; 
-	//qp_attr.cap.max_recv_sge = 1; 
+	//qp_attr.cap.max_recv_wr = 1;
+	//qp_attr.cap.max_recv_sge = 1;
 
 	qp_attr.send_cq        = *cq;
 	qp_attr.recv_cq        = *cq;
@@ -132,7 +132,7 @@ int rconnect(char *host, char *port,
 
 
 	conn_param.initiator_depth = 1;
-	conn_param.retry_count     = 7;
+	conn_param.retry_count	   = 7;
 
 	err = rdma_connect(*cm_id, &conn_param);
 	if (err) {
@@ -163,11 +163,11 @@ int rconnect(char *host, char *port,
 }
 
 int rdisconnect(
-	struct rdma_event_channel *cm_channel, 
-	struct rdma_cm_id *cm_id, 
+	struct rdma_event_channel *cm_channel,
+	struct rdma_cm_id *cm_id,
 	struct ibv_mr *mr,
 	struct ibv_cq *cq,
-   	struct ibv_pd *pd,
+	struct ibv_pd *pd,
 	struct ibv_comp_channel *comp_chan
 ) {
 	int err;
@@ -195,27 +195,27 @@ int max(int a, int b) {
 	return a < b ? b : a;
 }
 
-int main(int argc, char   *argv[ ]) 
+int main(int argc, char   *argv[ ])
 {
-   	struct pdata					server_pdata;
+	struct pdata					server_pdata;
 
-   	struct rdma_event_channel		*cm_channel = NULL; 
-   	struct rdma_cm_id				*cm_id = NULL; 
+	struct rdma_event_channel		*cm_channel = NULL;
+	struct rdma_cm_id				*cm_id = NULL;
 
-   	struct ibv_pd					*pd = NULL; 
-   	struct ibv_comp_channel			*comp_chan = NULL; 
-   	struct ibv_cq					*cq = NULL; 
-   	struct ibv_cq					*evt_cq = NULL; 
-   	struct ibv_mr					*mr = NULL; 
-   	struct ibv_sge					sge, rsge; 
-   	struct ibv_send_wr				send_wr = { }; 
-   	struct ibv_send_wr 				*bad_send_wr; 
-   	struct ibv_recv_wr				recv_wr = { }; 
-   	struct ibv_recv_wr				*bad_recv_wr; 
-   	struct ibv_wc					wc; 
-   	void							*cq_context; 
+	struct ibv_pd					*pd = NULL;
+	struct ibv_comp_channel			*comp_chan = NULL;
+	struct ibv_cq					*cq = NULL;
+	struct ibv_cq					*evt_cq = NULL;
+	struct ibv_mr					*mr = NULL;
+	struct ibv_sge					sge, rsge;
+	struct ibv_send_wr				send_wr = { };
+	struct ibv_send_wr				*bad_send_wr;
+	struct ibv_recv_wr				recv_wr = { };
+	struct ibv_recv_wr				*bad_recv_wr;
+	struct ibv_wc					wc;
+	void							*cq_context;
 
-	uint32_t						*buf, *buf2, *tmp; 
+	uint32_t						*buf, *buf2, *tmp;
 
 	uint32_t event_count = 0;
 	struct timespec now, tmstart;
@@ -236,7 +236,7 @@ int main(int argc, char   *argv[ ])
 
 	int retries = 0;
 	int argv_idx = 1;
-	
+
 
 	if (argc < 4) {
 		usage();
@@ -273,14 +273,14 @@ int main(int argc, char   *argv[ ])
 	}
 
 	buf = calloc(buf_len, 1);
-	if (!buf) 
+	if (!buf)
 		return 113;
 	buf2 = (uint32_t*)(((char*)buf) + buf_size);
 
 	/* RDMA CM */
-	cm_channel = rdma_create_event_channel(); 
-	if (!cm_channel)  
-		return 101; 
+	cm_channel = rdma_create_event_channel();
+	if (!cm_channel)
+		return 101;
 
 	for (;;) {
 		int r = rconnect(host, ports, cm_channel, &cm_id, &mr, &cq, &pd, &comp_chan, buf, buf_len, &server_pdata);
@@ -313,15 +313,15 @@ int main(int argc, char   *argv[ ])
 
 	/* Prepost */
 
-	sge.addr = (uintptr_t) buf; 
+	sge.addr = (uintptr_t) buf;
 	sge.length = buf_size;
 	sge.lkey = mr->lkey;
 
-	rsge.addr = (uintptr_t) (((char*)buf) + 2*buf_size); 
+	rsge.addr = (uintptr_t) (((char*)buf) + 2*buf_size);
 	rsge.length = 4;
 	rsge.lkey = mr->lkey;
 
-	recv_wr.wr_id =     0;                
+	recv_wr.wr_id =     0;
 	recv_wr.sg_list =   &rsge;
 	recv_wr.num_sge =   1;
 
@@ -334,8 +334,8 @@ int main(int argc, char   *argv[ ])
 
 	buf_read_bytes = read_bytes = max(0, read(STDIN_FILENO, ((void*)(buf+1))+keylen+1, buf_size-4-keylen-1)) + keylen + 1;
 	// while (read_bytes && buf_read_bytes < buf_size-4) {
-	// 	read_bytes = read(STDIN_FILENO, ((void*)(buf+1)) + buf_read_bytes, buf_size-4-buf_read_bytes);
-	// 	buf_read_bytes += read_bytes;
+	//	read_bytes = read(STDIN_FILENO, ((void*)(buf+1)) + buf_read_bytes, buf_size-4-buf_read_bytes);
+	//	buf_read_bytes += read_bytes;
 	// }
 	// fprintf(stderr, "%d %d\n", read_bytes, errno);
 	buf[0] = buf_read_bytes;
@@ -354,16 +354,16 @@ int main(int argc, char   *argv[ ])
 		if (ibv_post_recv(cm_id->qp, &recv_wr, &bad_recv_wr))
 			return 1;
 
-		sge.addr 					  = (uintptr_t) buf; 
-		sge.length                    = buf_read_bytes + 4;
-		sge.lkey                      = mr->lkey;
+		sge.addr					  = (uintptr_t) buf;
+		sge.length		      = buf_read_bytes + 4;
+		sge.lkey		      = mr->lkey;
 
-		send_wr.wr_id                 = wr_id;
-		send_wr.opcode                = IBV_WR_SEND;
-		send_wr.send_flags            = IBV_SEND_SIGNALED;
-		send_wr.sg_list               = &sge;
-		send_wr.num_sge               = 1;
-		send_wr.wr.rdma.rkey          = ntohl(server_pdata.buf_rkey);
+		send_wr.wr_id		      = wr_id;
+		send_wr.opcode		      = IBV_WR_SEND;
+		send_wr.send_flags	      = IBV_SEND_SIGNALED;
+		send_wr.sg_list		      = &sge;
+		send_wr.num_sge		      = 1;
+		send_wr.wr.rdma.rkey	      = ntohl(server_pdata.buf_rkey);
 		send_wr.wr.rdma.remote_addr   = ntohl(server_pdata.buf_va);
 
 		if (ibv_post_send(cm_id->qp, &send_wr, &bad_send_wr))
@@ -375,13 +375,13 @@ int main(int argc, char   *argv[ ])
 
 		buf_read_bytes = read_bytes = max(0, read(STDIN_FILENO, &buf[1], buf_size-4));
 		// while (read_bytes && buf_read_bytes < buf_size-4) {
-		// 	read_bytes = read(STDIN_FILENO, ((void*)(&buf[1])) + buf_read_bytes, buf_size-4-buf_read_bytes);
-		// 	buf_read_bytes += read_bytes;
+		//	read_bytes = read(STDIN_FILENO, ((void*)(&buf[1])) + buf_read_bytes, buf_size-4-buf_read_bytes);
+		//	buf_read_bytes += read_bytes;
 		// }
 		buf[0] = buf_read_bytes;
 		// fprintf(stderr, "%d %d %d\n", read_bytes, buf_read_bytes, buf[0]);
 		total_bytes += buf_read_bytes;
-		
+
 		/* Wait for a response */
 
 		if (ibv_get_cq_event(comp_chan, &evt_cq, &cq_context))
