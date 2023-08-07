@@ -54,11 +54,11 @@ int rconnect(char *host, char *port,
 	struct ibv_qp_init_attr			qp_attr = { };
 	int								n;
 	struct rdma_cm_event			*event;
-	int err;
+	int ret;
 
-	err = rdma_create_id(cm_channel, cm_id, NULL, RDMA_PS_TCP);
-	if (err)
-		return err;
+	ret = rdma_create_id(cm_channel, cm_id, NULL, RDMA_PS_TCP);
+	if (ret)
+		return ret;
 
 	n = getaddrinfo(host, port, &hints, &res);
 	if (n < 0)
@@ -67,15 +67,15 @@ int rconnect(char *host, char *port,
 	/* Connect to remote end */
 
 	for (t = res; t; t = t->ai_next) {
-		err = rdma_resolve_addr(*cm_id, NULL, t->ai_addr, RESOLVE_TIMEOUT_MS);
-		if (!err)
+		ret = rdma_resolve_addr(*cm_id, NULL, t->ai_addr, RESOLVE_TIMEOUT_MS);
+		if (!ret)
 			break;
 	}
-	if (err)
+	if (ret)
 		return 103;
 
-	err = rdma_get_cm_event(cm_channel, &event);
-	if (err)
+	ret = rdma_get_cm_event(cm_channel, &event);
+	if (ret)
 		return 104;
 
 	if (event->event != RDMA_CM_EVENT_ADDR_RESOLVED)
@@ -83,12 +83,12 @@ int rconnect(char *host, char *port,
 
 	rdma_ack_cm_event(event);
 
-	err = rdma_resolve_route(*cm_id, RESOLVE_TIMEOUT_MS);
-	if (err)
+	ret = rdma_resolve_route(*cm_id, RESOLVE_TIMEOUT_MS);
+	if (ret)
 		return 106;
 
-	err = rdma_get_cm_event(cm_channel, &event);
-	if (err)
+	ret = rdma_get_cm_event(cm_channel, &event);
+	if (ret)
 		return 107;
 
 	if (event->event != RDMA_CM_EVENT_ROUTE_RESOLVED)
@@ -126,24 +126,24 @@ int rconnect(char *host, char *port,
 	qp_attr.recv_cq        = *cq;
 	qp_attr.qp_type        = IBV_QPT_RC;
 
-	err = rdma_create_qp(*cm_id, *pd, &qp_attr);
-	if (err)
+	ret = rdma_create_qp(*cm_id, *pd, &qp_attr);
+	if (ret)
 		return 114;
 
 
 	conn_param.initiator_depth = 1;
 	conn_param.retry_count	   = 7;
 
-	err = rdma_connect(*cm_id, &conn_param);
-	if (err) {
+	ret = rdma_connect(*cm_id, &conn_param);
+	if (ret) {
 		fprintf(stderr, "rdma_connect() error: %d\n", errno);
 		return 115;
 	}
 
 	/* Connect! */
 
-	err = rdma_get_cm_event(cm_channel, &event);
-	if (err) {
+	ret = rdma_get_cm_event(cm_channel, &event);
+	if (ret) {
 		return 116;
 	}
 
@@ -170,23 +170,23 @@ int rdisconnect(
 	struct ibv_pd *pd,
 	struct ibv_comp_channel *comp_chan
 ) {
-	int err;
-	err = rdma_disconnect(cm_id);
-	if (err) {
+	int ret;
+	ret = rdma_disconnect(cm_id);
+	if (ret) {
 		return 201;
 	}
 	rdma_destroy_qp(cm_id);
-	if (err) return 203;
-	err = ibv_dereg_mr(mr);
-	if (err) return 204;
-	err = ibv_destroy_cq(cq);
-	if (err) return 205;
-	err = ibv_dealloc_pd(pd);
-	if (err) return 206;
-	err = ibv_destroy_comp_channel(comp_chan);
-	if (err) return 207;
-	err = rdma_destroy_id(cm_id);
-	if (err) return 208;
+	if (ret) return 203;
+	ret = ibv_dereg_mr(mr);
+	if (ret) return 204;
+	ret = ibv_destroy_cq(cq);
+	if (ret) return 205;
+	ret = ibv_dealloc_pd(pd);
+	if (ret) return 206;
+	ret = ibv_destroy_comp_channel(comp_chan);
+	if (ret) return 207;
+	ret = rdma_destroy_id(cm_id);
+	if (ret) return 208;
 
 	return 0;
 }

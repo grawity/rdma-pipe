@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
 	uint32_t buf_size = 16 * 524288;
 
 
-	int			err;
+	int			ret;
 	uint32_t event_count = 0;
 
 	int port;
@@ -108,9 +108,9 @@ int main(int argc, char *argv[])
 	if (!cm_channel)
 		return 1;
 
-	err = rdma_create_id(cm_channel, &listen_id, NULL, RDMA_PS_TCP);
-	if (err)
-		return err;
+	ret = rdma_create_id(cm_channel, &listen_id, NULL, RDMA_PS_TCP);
+	if (ret)
+		return ret;
 
 	sin.sin_family = AF_INET;
 	sin.sin_port = htons(port);
@@ -119,17 +119,17 @@ int main(int argc, char *argv[])
 
 	/* Bind to local port and listen for connection request */
 
-	err = rdma_bind_addr(listen_id, (struct sockaddr *) &sin);
-	if (err)
+	ret = rdma_bind_addr(listen_id, (struct sockaddr *) &sin);
+	if (ret)
 		return 1;
 
-	err = rdma_listen(listen_id, 1);
-	if (err)
+	ret = rdma_listen(listen_id, 1);
+	if (ret)
 		return 1;
 
-	err = rdma_get_cm_event(cm_channel, &event);
-	if (err)
-		return err;
+	ret = rdma_get_cm_event(cm_channel, &event);
+	if (ret)
+		return ret;
 
 	if (event->event != RDMA_CM_EVENT_CONNECT_REQUEST)
 		return 1;
@@ -179,9 +179,9 @@ int main(int argc, char *argv[])
 
 	qp_attr.qp_type = IBV_QPT_RC;
 
-	err = rdma_create_qp(cm_id, pd, &qp_attr);
-	if (err)
-		return err;
+	ret = rdma_create_qp(cm_id, pd, &qp_attr);
+	if (ret)
+		return ret;
 
 	/* Post receive before accepting connection */
 	sge.addr = (uintptr_t) buf2;
@@ -210,13 +210,13 @@ int main(int argc, char *argv[])
 
 	/* Accept connection */
 
-	err = rdma_accept(cm_id, &conn_param);
-	if (err)
+	ret = rdma_accept(cm_id, &conn_param);
+	if (ret)
 		return 1;
 
-	err = rdma_get_cm_event(cm_channel, &event);
-	if (err)
-		return err;
+	ret = rdma_get_cm_event(cm_channel, &event);
+	if (ret)
+		return ret;
 
 	if (event->event != RDMA_CM_EVENT_ESTABLISHED)
 		return 1;
