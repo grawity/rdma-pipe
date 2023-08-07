@@ -154,32 +154,20 @@ int rconnect(char *host, char *port,
 	conn_param.retry_count	   = 7;
 
 	ret = rdma_connect(*cm_id, &conn_param);
-	if (ret < 0) {
-		warn("XXX: could not create rdma connection");
-		return -1;
-	}
-
-	/* Connect! */
+	if (ret < 0)
+		err(1, "could not initiate rdma connection");
 
 	ret = rdma_get_cm_event(cm_channel, &event);
 	if (ret < 0)
 		err(1, "could not get rdma CM event");
 
-	if (event->event != RDMA_CM_EVENT_ESTABLISHED) {
-		ret = rdma_ack_cm_event(event);
-		if (ret < 0)
-			err(1, "could not ack rdma CM event");
-
-		warnx("XXX: rdma_get_cm_event() => %s", rdma_event_str(event->event));
-		if (event->event == RDMA_CM_EVENT_REJECTED) {
-			warnx("XXX: connection was refused");
-			errno = ECONNREFUSED;
-			return -1;
-			// TODO: this should be fatal too
-		} else {
-			errx(1, "unexpected rdma event: %s", rdma_event_str(event->event));
-		}
+	if (event->event == RDMA_CM_EVENT_REJECTED) {
+		errno = ECONNREFUSED;
+		err(1, "could not establish rdma connection");
 	}
+
+	if (event->event != RDMA_CM_EVENT_ESTABLISHED)
+		errx(1, "unexpected rdma event: %s", rdma_event_str(event->event));
 
 	memcpy(server_pdata, event->param.conn.private_data, sizeof(struct pdata));
 
@@ -331,8 +319,6 @@ int main(int argc, char   *argv[ ])
 			} else {
 				return 1;
 			}
-		} else if (errno == ECONNREFUSED) {
-			err(1, "connection failed");
 		} else {
 			warn("XXX: rconnect failed");
 		}
