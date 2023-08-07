@@ -34,10 +34,6 @@ void usage() {
 	fprintf(stderr, "USAGE: rdrecv [-v] <port> <key>\n");
 }
 
-void wrongkey() {
-	fprintf(stderr, "Wrong key received\n");
-}
-
 int main(int argc, char *argv[])
 {
 	struct pdata	rep_pdata;
@@ -288,9 +284,8 @@ int main(int argc, char *argv[])
 			for (i=0; i<msgLen && keyIdx<keylen+1; i++, keyIdx++, cbuf++) {
 				// include the zero byte at the end of the key
 				if (*cbuf != key[keyIdx]) {
-					wrongkey();
 					ibv_ack_cq_events(cq, event_count);
-					return 20;
+					errx(1, "wrong key was received");
 				}
 			}
 			ret = write(STDOUT_FILENO, cbuf, msgLen-i);
