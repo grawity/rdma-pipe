@@ -7,6 +7,7 @@
  * Reads data from stdin and RDMA sends it to the given server and port, authenticating with the key.
  *
  */
+#include <err.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -52,70 +53,89 @@ int rconnect(char *host, char *port,
 		.ai_socktype  = SOCK_STREAM
 	};
 	struct ibv_qp_init_attr			qp_attr = { };
-	int								n;
 	struct rdma_cm_event			*event;
 	int ret;
 
 	ret = rdma_create_id(cm_channel, cm_id, NULL, RDMA_PS_TCP);
-	if (ret)
-		return ret;
+	if (ret < 0)
+		err(1, "could not allocate rdma id");
 
-	n = getaddrinfo(host, port, &hints, &res);
-	if (n < 0)
-		return 102;
+	ret = getaddrinfo(host, port, &hints, &res);
+	if (ret != 0) {
+		warnx("XXX: getaddrinfo failed: %s", gai_strerror(ret));
+		errno = ENONET;
+		return -1;
+	}
 
 	/* Connect to remote end */
 
 	for (t = res; t; t = t->ai_next) {
 		ret = rdma_resolve_addr(*cm_id, NULL, t->ai_addr, RESOLVE_TIMEOUT_MS);
-		if (!ret)
+		if (ret == 0)
 			break;
 	}
-	if (ret)
-		return 103;
+	if (ret != 0) {
+		warn("XXX: could not resolve rdma address");
+		errno = ENOLINK;
+		return -1;
+	}
+
 
 	ret = rdma_get_cm_event(cm_channel, &event);
-	if (ret)
-		return 104;
+	if (ret < 0)
+		err(1, "could not get rdma CM event");
 
 	if (event->event != RDMA_CM_EVENT_ADDR_RESOLVED)
-		return 105;
+		errx(1, "unexpected rdma event: %s", rdma_event_str(event->event));
 
-	rdma_ack_cm_event(event);
+	ret = rdma_ack_cm_event(event);
+	if (ret < 0)
+		err(1, "could not ack rdma CM event");
+
 
 	ret = rdma_resolve_route(*cm_id, RESOLVE_TIMEOUT_MS);
-	if (ret)
-		return 106;
+	if (ret < 0)
+		err(1, "could not resolve rdma route"); // XXX: retryable?
 
 	ret = rdma_get_cm_event(cm_channel, &event);
-	if (ret)
-		return 107;
+	if (ret < 0)
+		err(1, "could not get rdma CM event");
 
 	if (event->event != RDMA_CM_EVENT_ROUTE_RESOLVED)
-		return 108;
+		errx(1, "unexpected rdma event: %s", rdma_event_str(event->event));
 
-	rdma_ack_cm_event(event);
+	ret = rdma_ack_cm_event(event);
+	if (ret < 0)
+		err(1, "could not ack rdma CM event");
+
 
 	/* Create IB buffers and CQs and things */
 
 	*pd = ibv_alloc_pd((*cm_id)->verbs);
-	if (!*pd)
-		return 109;
+	if (*pd == NULL)
+		err(1, "could not allocate protection domain");
 
 	*comp_chan = ibv_create_comp_channel((*cm_id)->verbs);
-	if (!*comp_chan)
-		return 110;
+	if (*comp_chan == NULL)
+		err(1, "could not create completion channel");
 
 	*cq = ibv_create_cq((*cm_id)->verbs, 2,NULL, *comp_chan, 0);
-	if (!*cq)
-		return 111;
+	if (*cq == NULL)
+		err(1, "could not create completion queue");
 
-	if (ibv_req_notify_cq(*cq, 0))
-		return 112;
+	ret = ibv_req_notify_cq(*cq, 0);
+	if (ret != 0)
+		err(1, "could not request completion queue notify");
 
 	*mr = ibv_reg_mr(*pd, buf, buf_len, IBV_ACCESS_LOCAL_WRITE);
-	if (!*mr)
-		return 99;
+	if (!*mr) {
+		if (errno == ENOMEM) {
+			warn("XXX: could not register memory region");
+			return -1;
+		} else {
+			err(1, "could not register memory region");
+		}
+	}
 
 	//qp_attr.cap.max_send_wr = 2;
 	//qp_attr.cap.max_send_sge = 1;
@@ -127,37 +147,45 @@ int rconnect(char *host, char *port,
 	qp_attr.qp_type        = IBV_QPT_RC;
 
 	ret = rdma_create_qp(*cm_id, *pd, &qp_attr);
-	if (ret)
-		return 114;
-
+	if (ret < 0)
+		err(1, "could not create rdma queue pair");
 
 	conn_param.initiator_depth = 1;
 	conn_param.retry_count	   = 7;
 
 	ret = rdma_connect(*cm_id, &conn_param);
-	if (ret) {
-		fprintf(stderr, "rdma_connect() error: %d\n", errno);
-		return 115;
+	if (ret < 0) {
+		warn("XXX: could not create rdma connection");
+		return -1;
 	}
 
 	/* Connect! */
 
 	ret = rdma_get_cm_event(cm_channel, &event);
-	if (ret) {
-		return 116;
-	}
+	if (ret < 0)
+		err(1, "could not get rdma CM event");
 
 	if (event->event != RDMA_CM_EVENT_ESTABLISHED) {
-		rdma_ack_cm_event(event);
-		fprintf(stderr, "rdma_get_cm_event() got event: %s\n",
-			rdma_event_str(event->event));
-		if (event->event == RDMA_CM_EVENT_REJECTED)
+		ret = rdma_ack_cm_event(event);
+		if (ret < 0)
+			err(1, "could not ack rdma CM event");
+
+		warnx("XXX: rdma_get_cm_event() => %s", rdma_event_str(event->event));
+		if (event->event == RDMA_CM_EVENT_REJECTED) {
+			warnx("XXX: connection was refused");
 			errno = ECONNREFUSED;
-		return 117;
+			return -1;
+			// TODO: this should be fatal too
+		} else {
+			errx(1, "unexpected rdma event: %s", rdma_event_str(event->event));
+		}
 	}
 
 	memcpy(server_pdata, event->param.conn.private_data, sizeof(struct pdata));
-	rdma_ack_cm_event(event);
+
+	ret = rdma_ack_cm_event(event);
+	if (ret < 0)
+		err(1, "could not ack rdma CM event");
 
 	return 0;
 }
@@ -171,22 +199,32 @@ int rdisconnect(
 	struct ibv_comp_channel *comp_chan
 ) {
 	int ret;
+
 	ret = rdma_disconnect(cm_id);
-	if (ret) {
-		return 201;
-	}
+	if (ret < 0)
+		err(1, "could not close rdma connection");
+
 	rdma_destroy_qp(cm_id);
-	if (ret) return 203;
+
 	ret = ibv_dereg_mr(mr);
-	if (ret) return 204;
+	if (ret != 0)
+		err(1, "could not deregister memory region");
+
 	ret = ibv_destroy_cq(cq);
-	if (ret) return 205;
+	if (ret != 0)
+		err(1, "could not destroy completion queue");
+
 	ret = ibv_dealloc_pd(pd);
-	if (ret) return 206;
+	if (ret != 0)
+		err(1, "could not deallocate protection domain");
+
 	ret = ibv_destroy_comp_channel(comp_chan);
-	if (ret) return 207;
+	if (ret != 0)
+		err(1, "could not destroy completion channel");
+
 	ret = rdma_destroy_id(cm_id);
-	if (ret) return 208;
+	if (ret < 0)
+		err(1, "could not release rdma id");
 
 	return 0;
 }
@@ -237,6 +275,7 @@ int main(int argc, char   *argv[ ])
 	int retries = 0;
 	int argv_idx = 1;
 
+	int ret;
 
 	if (argc < 4) {
 		usage();
@@ -254,11 +293,7 @@ int main(int argc, char   *argv[ ])
 	port = atoi(ports);
 
 	if (port < 1 || port > 65535)
-	{
-		usage();
-		fprintf(stderr, "\nError: Port should be between 1 and 65535, got %d instead.\n\n", port);
-		return 1;
-	}
+		errx(2, "port should be 1-65535 (got %d)", port);
 
 	key = argv[argv_idx++];
 	keylen = strlen(key);
@@ -268,45 +303,44 @@ int main(int argc, char   *argv[ ])
 	struct rlimit lim;
 	getrlimit(RLIMIT_MEMLOCK, &lim);
 	if (buf_len > lim.rlim_cur) {
-		fprintf(stderr, "Warning: Insufficient RLIMIT_MEMLOCK (want %u bytes, can do %ld:%ld)\n",
+		warnx("warning: insufficient RLIMIT_MEMLOCK (want %u, can do %ld:%ld)",
 			buf_len, lim.rlim_cur, lim.rlim_max);
 	}
 
 	buf = calloc(buf_len, 1);
-	if (!buf)
-		return 113;
+	if (buf == NULL)
+		errx(1, "could not allocate buffers");
+
 	buf2 = (uint32_t*)(((char*)buf) + buf_size);
 
 	/* RDMA CM */
 	cm_channel = rdma_create_event_channel();
-	if (!cm_channel)
-		return 101;
+	if (cm_channel == NULL)
+		err(1, "could not create rdma event channel");
 
 	for (;;) {
 		int r = rconnect(host, ports, cm_channel, &cm_id, &mr, &cq, &pd, &comp_chan, buf, buf_len, &server_pdata);
 		if (r == 0)
 			break;
-		else if (r == 99 && errno == ENOMEM) {
-			fprintf(stderr, "Connection failed: %m (tried %d bytes); raise RLIMIT_MEMLOCK\n", buf_len);
+		else if (errno == ENOMEM) {
+			warnx("RLIMIT_MEMLOCK insufficient (tried %d bytes)", buf_len);
 			if (buf_size > (512 * 1024)) {
 				buf_size /= 2;
 				buf_len = buf_size*2+4;
-				fprintf(stderr, "Retrying with %d bytes\n", buf_len);
+				warnx("retrying with %d bytes", buf_len);
 			} else {
 				return 1;
 			}
-		} else if (r == 117 && errno == ECONNREFUSED) {
-			fprintf(stderr, "Connection failed: %m\n");
-			return 1;
+		} else if (errno == ECONNREFUSED) {
+			err(1, "connection failed");
 		} else {
-			fprintf(stderr, "rconnect returned %d (error: %m)\n", r);
+			warn("XXX: rconnect failed");
 		}
 
 		retries++;
-		if (retries > 300) {
-			fprintf(stderr, "Connection timed out\n");
-			return 199;
-		}
+		if (retries > 300)
+			errx(1, "giving up connection after 300 retries");
+
 		rdisconnect(cm_channel, cm_id, mr, cq, pd, comp_chan);
 		nanosleep((const struct timespec[]){{0, 10000000L}}, NULL);
 	}
@@ -327,7 +361,10 @@ int main(int argc, char   *argv[ ])
 
 	/* Read some bytes from STDIN, send them over with IBV_WR_SEND */
 
-	clock_gettime(CLOCK_REALTIME, &tmstart);
+	ret = clock_gettime(CLOCK_REALTIME, &tmstart);
+	if (ret < 0)
+		err(1, "clock_gettime failed");
+
 	total_bytes = 0;
 
 	memcpy((buf+1), key, keylen+1);
@@ -346,13 +383,15 @@ int main(int argc, char   *argv[ ])
 	while (more_to_send) {
 		if (buf_read_bytes == 0) {
 			if (buf[0] != buf_read_bytes) {
-				return 100;
+				errx(1, "XXX: buf[0] != buf_read_bytes (%u != %lu)",
+					buf[0], buf_read_bytes);
 			}
 			more_to_send = 0;
 		}
 
-		if (ibv_post_recv(cm_id->qp, &recv_wr, &bad_recv_wr))
-			return 1;
+		ret = ibv_post_recv(cm_id->qp, &recv_wr, &bad_recv_wr);
+		if (ret != 0)
+			err(1, "could not post receive work request");
 
 		sge.addr					  = (uintptr_t) buf;
 		sge.length		      = buf_read_bytes + 4;
@@ -366,8 +405,9 @@ int main(int argc, char   *argv[ ])
 		send_wr.wr.rdma.rkey	      = ntohl(server_pdata.buf_rkey);
 		send_wr.wr.rdma.remote_addr   = ntohl(server_pdata.buf_va);
 
-		if (ibv_post_send(cm_id->qp, &send_wr, &bad_send_wr))
-			return 1;
+		ret = ibv_post_send(cm_id->qp, &send_wr, &bad_send_wr);
+		if (ret != 0)
+			err(1, "could not post send work request");
 
 		tmp = buf;
 		buf = buf2;
@@ -384,45 +424,55 @@ int main(int argc, char   *argv[ ])
 
 		/* Wait for a response */
 
-		if (ibv_get_cq_event(comp_chan, &evt_cq, &cq_context))
-			return 2;
+		ret = ibv_get_cq_event(comp_chan, &evt_cq, &cq_context);
+		if (ret != 0)
+			err(1, "could not get completion queue event");
 
-		if (ibv_req_notify_cq(cq, 0))
-			return 3;
+		ret = ibv_req_notify_cq(cq, 0);
+		if (ret != 0)
+			err(1, "could not request completion queue notify");
 
-		if (ibv_poll_cq(cq, 1, &wc) != 1)
-			return 4;
+		ret = ibv_poll_cq(cq, 1, &wc);
+		if (ret < 1)
+			err(1, "could not poll completion queue");
 
 		if (wc.status != IBV_WC_SUCCESS)
-			return 5;
+			errx(1, "bad wc.status: %s", ibv_wc_status_str(wc.status));
 
 		//printf("%d\n", buf[0]);
 
-		if (ibv_get_cq_event(comp_chan, &evt_cq, &cq_context))
-			return 6;
+		ret = ibv_get_cq_event(comp_chan, &evt_cq, &cq_context);
+		if (ret != 0)
+			err(1, "could not get completion queue event");
 
-		if (ibv_req_notify_cq(cq, 0))
-			return 7;
+		ret = ibv_req_notify_cq(cq, 0);
+		if (ret != 0)
+			err(1, "could not request completion queue notify");
 
-		if (ibv_poll_cq(cq, 1, &wc) != 1)
-			return 8;
+		ret = ibv_poll_cq(cq, 1, &wc);
+		if (ret < 1)
+			err(1, "could not poll completion queue");
 
 		if (wc.status != IBV_WC_SUCCESS)
-			return 9;
+			errx(1, "bad wc.status: %s", ibv_wc_status_str(wc.status));
 
 		event_count += 2;
 		//printf("%d %d %d\n", read_bytes, buf_read_bytes, buf[0]);
 	}
 
-	clock_gettime(CLOCK_REALTIME, &now);
+	ret = clock_gettime(CLOCK_REALTIME, &now);
+	if (ret < 0)
+		err(1, "clock_gettime failed");
+
 	seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9));
 	if (verbose > 0) {
-		fprintf(stderr, "Bandwidth %.3f GB/s\n", (total_bytes / seconds) / 1e9);
+		warnx("bandwidth %.3f GB/s", (total_bytes / seconds) / 1e9);
 	}
 
 	ibv_ack_cq_events(cq, event_count);
 
 	rdisconnect(cm_channel, cm_id, mr, cq, pd, comp_chan);
+
 	rdma_destroy_event_channel(cm_channel);
 
 	return 0;
