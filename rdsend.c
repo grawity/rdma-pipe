@@ -56,6 +56,8 @@ int rconnect(char *host, char *port,
 	struct rdma_cm_event			*event;
 	int ret;
 
+	// TODO: use rdma_create_ep()?
+
 	ret = rdma_create_id(cm_channel, cm_id, NULL, RDMA_PS_TCP);
 	if (ret < 0)
 		err(1, "could not allocate rdma id");
@@ -73,6 +75,7 @@ int rconnect(char *host, char *port,
 		ret = rdma_resolve_addr(*cm_id, NULL, t->ai_addr, RESOLVE_TIMEOUT_MS);
 		if (ret == 0)
 			break;
+		warn("could not resolve rdma address, trying next");
 	}
 	if (ret != 0) {
 		warn("XXX: could not resolve rdma address");
@@ -85,8 +88,14 @@ int rconnect(char *host, char *port,
 	if (ret < 0)
 		err(1, "could not get rdma CM event");
 
-	if (event->event != RDMA_CM_EVENT_ADDR_RESOLVED)
+	switch (event->event) {
+	case RDMA_CM_EVENT_ADDR_RESOLVED:
+		break;
+	case RDMA_CM_EVENT_ADDR_ERROR:
+		errx(1, "could not resolve rdma address");
+	default:
 		errx(1, "unexpected rdma event: %s", rdma_event_str(event->event));
+	}
 
 	ret = rdma_ack_cm_event(event);
 	if (ret < 0)
@@ -95,14 +104,20 @@ int rconnect(char *host, char *port,
 
 	ret = rdma_resolve_route(*cm_id, RESOLVE_TIMEOUT_MS);
 	if (ret < 0)
-		err(1, "could not resolve rdma route"); // XXX: retryable?
+		err(1, "could not initiate rdma route resolution");
 
 	ret = rdma_get_cm_event(cm_channel, &event);
 	if (ret < 0)
 		err(1, "could not get rdma CM event");
 
-	if (event->event != RDMA_CM_EVENT_ROUTE_RESOLVED)
+	switch (event->event) {
+	case RDMA_CM_EVENT_ROUTE_RESOLVED:
+		break;
+	case RDMA_CM_EVENT_ROUTE_ERROR:
+		errx(1, "could not resolve rdma route");
+	default:
 		errx(1, "unexpected rdma event: %s", rdma_event_str(event->event));
+	}
 
 	ret = rdma_ack_cm_event(event);
 	if (ret < 0)
@@ -161,13 +176,16 @@ int rconnect(char *host, char *port,
 	if (ret < 0)
 		err(1, "could not get rdma CM event");
 
-	if (event->event == RDMA_CM_EVENT_REJECTED) {
+	switch (event->event) {
+	case RDMA_CM_EVENT_ESTABLISHED:
+		break;
+	case RDMA_CM_EVENT_REJECTED:
 		errno = ECONNREFUSED;
-		err(1, "could not establish rdma connection");
+		errx(1, "rdma connection was refused");
+	default:
+		//errno = abs(event->status);
+		err(1, "unexpected rdma event: %s", rdma_event_str(event->event));
 	}
-
-	if (event->event != RDMA_CM_EVENT_ESTABLISHED)
-		errx(1, "unexpected rdma event: %s", rdma_event_str(event->event));
 
 	memcpy(server_pdata, event->param.conn.private_data, sizeof(struct pdata));
 
